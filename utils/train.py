@@ -33,6 +33,9 @@ import torch.optim as optim
 import torch.nn.functional as F
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from model.scParaLaG import scParaLaG
+from scipy.stats import pearsonr
+from decimal import Decimal
+import gc
 
 # Ignore all warnings
 warnings.filterwarnings("ignore")
@@ -40,7 +43,7 @@ warnings.filterwarnings("ignore")
 
 class CustomEarlyStopping:
     """
-    Custom early stopping mechanism for training scParaLaG.
+    A custom early stopping mechanism for training neural networks.
 
     This class provides a way to stop training early if the loss does not improve sufficiently over a given number of epochs.
     It tracks the best loss and the number of epochs since there was a significant improvement.
@@ -238,7 +241,7 @@ class scParaLaGWrapper:
             for i in range(0, num_nodes, batch_size):
                 batch_indices = indices[i:i + batch_size]
                 subgraph = train_graph.subgraph(batch_indices).to(self.args.device)
-                batch_labels = train_label[batch_indices].to(self.args.device)
+                batch_labels = train_label[batch_indices].to(self.args.device).float()
 
                 optimizer.zero_grad()
                 outputs = self.model(subgraph, subgraph.ndata['feat'])
@@ -251,8 +254,8 @@ class scParaLaGWrapper:
             avg_loss = math.sqrt(epoch_loss / (len(indices) / batch_size))
 
             # Validation and Test Phase
-            val_loss = self.score(val_graph, val_label)
-            test_loss = self.score(test_graph, test_label)
+            val_loss = self.score(val_graph, val_label.float())
+            test_loss = self.score(test_graph, test_label.float())
 
             if verbose:
                 print('---------------------------------')
@@ -281,7 +284,6 @@ class scParaLaGWrapper:
         # Load best model weights
         self.model.load_state_dict(torch.load(os.path.join(save_dir, 'best_model.pth')))
         self.model.eval()
-        result = pd.DataFrame({'rmse': [], 'seed': [], 'subtask': [], 'method': []})
         test_graph = test_graph.to(self.args.device)
         test_feat = test_graph.ndata['feat'].to(self.args.device)
         test_label = test_label.to(self.args.device)
@@ -289,12 +291,30 @@ class scParaLaGWrapper:
 
         rmse = math.sqrt(F.mse_loss(outputs, test_label))
 
+        # Detach the tensors and convert to NumPy arrays
+        pred_cpu = outputs.cpu().detach().numpy()
+        test_mod2_cpu = test_label.cpu().detach().numpy()
 
-        result = result.append(
+        pearson_correlation, p_value = pearsonr(pred_cpu.flatten(), test_mod2_cpu.flatten())
+
+        # Format p-value to 5 significant figures
+        p_value = Decimal(p_value).quantize(Decimal('1.0000e+0'))
+
+        result = pd.DataFrame(
             {
-                'rmse': rmse,
-                'seed': self.args.seed,
-                'subtask': self.args.subtask,
-                'method': 'scParaLaG',
-            }, ignore_index=True)
+                'rmse': [rmse],
+                'seed': [self.args.seed],
+                'subtask': [self.args.subtask],
+                'method': ['scParaLaG'],
+                'pearson': [pearson_correlation],
+                'p_value': [p_value]
+            })
         print(result)
+
+        # Clean up
+        del train_graph, val_graph, test_graph
+        del train_label, val_label, test_label
+        del outputs, test_feat, pred_cpu, test_mod2_cpu
+        if self.args.device == "cuda":
+            torch.cuda.empty_cache()
+        gc.collect()
