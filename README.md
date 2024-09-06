@@ -53,7 +53,7 @@ By accurately predicting modality pairs, especially in the absence of pathway da
     batch_size: 520
     act: "leaky_relu"
     conv_flow: ['gat']
-    agg_flow: [None]
+    agg_flow: [null]
     device: "cpu"
     learning_rate: 0.00004
     hidden_size: 512
