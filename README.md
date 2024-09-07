@@ -7,8 +7,7 @@
 - [Usage](#usage)
 - [Configuration](#configuration)
 - [Model Architecture](#model-architecture)
-- [Citation](#citation)
-- [License](#license)
+
 
 ## Introduction
 **scParaLaG** is a state-of-the-art Graph Neural Network (GNN) designed for multimodal single-cell analysis, utilizing parallel residual connections and layer-attentive mechanisms. This model efficiently integrates data from multiple modalities, such as RNA and protein, addressing challenges of modality prediction in cases where only unimodal data is available for a given cell.
