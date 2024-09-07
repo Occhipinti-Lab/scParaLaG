@@ -4,7 +4,7 @@ Description:                                                                    
     This module contains the scParaLaG framework for building scParaLaG models.                                                         |
                                                                                                                                         |
 Copyright:                                                                                                                              |
-    Copyright © 2024. All rights reserved.                                                                                              |                                                                             |
+    Copyright © 2024. All rights reserved.                                                                                              |                                                                             
                                                                                                                                         |
 License:                                                                                                                                |
     This script is licensed under the MIT License.                                                                                      |
