@@ -181,7 +181,7 @@ class scParaLaGWrapper:
     def fit(self, train_graph, val_graph, test_graph, train_label, val_label,
             test_label, num_epochs=500, batch_size=520,verbose=True,
             es_patience=20, es_min_delta=0.01, es_rate_threshold=0.001,
-            learning_rate=0.000028, sample=True):
+            learning_rate=0.000028, sample=True, l2_lambda=0.0):
         """
         Train and validate the model using the provided training and testing graphs and labels.
 
@@ -226,7 +226,7 @@ class scParaLaGWrapper:
         early_stopping = CustomEarlyStopping(patience=es_patience,
                                              min_delta=es_min_delta,
                                              rate_threshold=es_rate_threshold)
-        optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
+        optimizer = optim.Adam(self.model.parameters(), lr=learning_rate, weight_decay=l2_lambda)
         save_dir = "model_checkpoints"
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
