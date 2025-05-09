@@ -1,8 +1,7 @@
-torch
-torchvision
-torchaudio
-dgl
+torch==2.1.0
+torchvision==0.16.0
+torchaudio==2.1.0
+dgl==2.0.0
 pydance
-
-# Specific version requirement
-numpy==1.24.0
+pyyaml
+anndata==0.8.0

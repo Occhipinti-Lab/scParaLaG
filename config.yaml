@@ -20,3 +20,5 @@ layer_dim_ex: 3
 verbose: true
 sample: true
 preprocessing_type: "SVD"
+variant: "hierarchical"
+num_clusters: 10

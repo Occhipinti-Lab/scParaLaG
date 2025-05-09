@@ -24,125 +24,100 @@ Contact:                                                                        
 ----------------------------------------------------------------------------------------------------------------------------------------
 """
 
-import argparse
+import argparse, os, sys, yaml, torch
 from argparse import Namespace
-import torch
-import yaml
 from dance.datasets.multimodality import ModalityPredictionDataset
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from graph_transform import GraphCreator
 from train import scParaLaGWrapper
 
-def load_config(config_path):
-    with open(config_path, 'r') as file:
-        config = yaml.safe_load(file)
-    return config
+def load_config(path):
+    with open(path, 'r') as f:
+        return yaml.safe_load(f)
 
-def validate_config(config):
-    required_params = {
-        "subtask": str,
-        "batch_size": int,
-        "act": str,
-        "conv_flow": list,
-        "agg_flow": list,
-        "device": str,
-        "learning_rate": float,
-        "hidden_size": int,
-        "num_heads": int,
-        "n_neigbours": int,
-        "n_components": int,
-        "metric": str,
-        "dropout_rate": float,
-        "num_epochs": int,
-        "seed": int,
-        "es_patience": int,
-        "es_min_delta": float,
-        "es_rate_threshold": float,
-        "layer_dim_ex": int,
-        "verbose": bool,
-        "sample": bool,
-        "preprocessing_type": str
+def validate_config(cfg):
+    required = {
+        "subtask": str, "batch_size": int, "act": str,
+        "conv_flow": list, "agg_flow": list, "device": str,
+        "learning_rate": float, "hidden_size": int, "num_heads": int,
+        "n_neigbours": int, "n_components": int, "metric": str,
+        "dropout_rate": float, "num_epochs": int, "seed": int,
+        "es_patience": int, "es_min_delta": float, "es_rate_threshold": float,
+        "layer_dim_ex": int, "verbose": bool, "sample": bool,
+        "preprocessing_type": str, "variant": str, "num_clusters": int,
+        "processed": bool
     }
+    for k, t in required.items():
+        if k not in cfg and k != "processed":
+            raise ValueError(f"Missing config: {k}")
+        if k in cfg and not isinstance(cfg[k], t):
+            if k == "agg_flow" and cfg[k] == [None]: continue
+            raise TypeError(f"{k} must be {t}, got {type(cfg[k])}")
+    if cfg.get("agg_flow") is None:
+        cfg["agg_flow"] = [None]
+    return cfg
+
+def load_or_process_data(cfg, data):
+    name = f"processed_data_{cfg['subtask']}"
+    folder = "./processed_data"
+    paths = {k: os.path.join(folder, f"{name}_{k}.pt") for k in 
+             ["train_graph", "val_graph", "test_graph", "train_label", "val_label", "test_label", "feature_size", "output_size"]}
+    flag_path = os.path.join(folder, f"{name}_processed.flag")
     
-    for param, param_type in required_params.items():
-        if param not in config:
-            raise ValueError(f"Missing required parameter: {param}")
-        if not isinstance(config[param], param_type):
-            raise TypeError(f"Parameter {param} should be of type {param_type}, but is {type(config[param])}")
-
-    return config
-
-
-def pipeline(**kwargs):
-    subtask = kwargs["subtask"]
-    dataset = ModalityPredictionDataset(subtask, preprocess=None)
-    data = dataset.load_data()
-
-    if kwargs["subtask"]=="openproblems_bmmc_cite_phase2_mod2":
-        kwargs["preprocessing_type"] = "None"
-
-    data, train_label, val_label, test_label, ftl_shape = GraphCreator(
-        kwargs["preprocessing_type"], kwargs["n_neigbours"],
-        kwargs["n_components"],
-        kwargs["metric"])(data)
-
-    if kwargs["preprocessing_type"]=="SVD":
-        kwargs["FEATURE_SIZE"] = kwargs["n_components"]
+    if os.path.exists(flag_path) and all(os.path.exists(p) for p in paths.values()):
+        data.data.uns['gtrain'] = torch.load(paths["train_graph"])
+        data.data.uns['gval'] = torch.load(paths["val_graph"])
+        data.data.uns['gtest'] = torch.load(paths["test_graph"])
+        return data, *(torch.load(paths[k]).numpy() for k in ["train_label", "val_label", "test_label"]), \
+               torch.load(paths["feature_size"]).item(), torch.load(paths["output_size"]).item(), True
     else:
-        kwargs["FEATURE_SIZE"] = ftl_shape[0]
-    kwargs["OUTPUT_SIZE"] = ftl_shape[1]
+        os.makedirs(folder, exist_ok=True)
+        g = GraphCreator(cfg["preprocessing_type"], cfg["n_neigbours"], cfg["n_components"], cfg["metric"])
+        data, y_train, y_val, y_test, shape = g(data)
+        feature_size, output_size = (cfg["n_components"], shape[1]) if cfg["preprocessing_type"] == "SVD" else shape
+        torch.save(data.data.uns['gtrain'], paths["train_graph"])
+        torch.save(data.data.uns['gval'], paths["val_graph"])
+        torch.save(data.data.uns['gtest'], paths["test_graph"])
+        torch.save(torch.tensor(y_train), paths["train_label"])
+        torch.save(torch.tensor(y_val), paths["val_label"])
+        torch.save(torch.tensor(y_test), paths["test_label"])
+        torch.save(torch.tensor(feature_size), paths["feature_size"])
+        torch.save(torch.tensor(output_size), paths["output_size"])
+        with open(flag_path, 'w'): pass
+        return data, y_train, y_val, y_test, feature_size, output_size, True
 
-    train_graph, val_graph, test_graph = data.data.uns['gtrain'], data.data.uns['gval'], data.data.uns['gtest']
-
-    model = scParaLaGWrapper(Namespace(**kwargs))
-    model.fit(train_graph, val_graph, test_graph, torch.tensor(train_label),
-              torch.tensor(val_label), torch.tensor(test_label),
-              num_epochs=kwargs["num_epochs"], batch_size=kwargs["batch_size"],
-              verbose=kwargs["verbose"], es_patience=kwargs["es_patience"],
-              es_min_delta=kwargs["es_min_delta"],
-              es_rate_threshold=kwargs["es_rate_threshold"],
-              learning_rate=kwargs["learning_rate"],
-              sample=kwargs["sample"])
-
-
-
-def pipeline(**kwargs):
-    subtask = kwargs["subtask"]
-    dataset = ModalityPredictionDataset(subtask, preprocess=None)
+def pipeline(cfg):
+    dataset = ModalityPredictionDataset(cfg["subtask"], preprocess='feature_selection')
     data = dataset.load_data()
-
-    if kwargs["subtask"] == "openproblems_bmmc_cite_phase2_mod2":
-        kwargs["preprocessing_type"] = "None"
-
-    data, train_label, val_label, test_label, ftl_shape = GraphCreator(
-        kwargs["preprocessing_type"], kwargs["n_neigbours"],
-        kwargs["n_components"],
-        kwargs["metric"])(data)
-
-    if kwargs["preprocessing_type"] == "SVD":
-        kwargs["FEATURE_SIZE"] = kwargs["n_components"]
-    else:
-        kwargs["FEATURE_SIZE"] = ftl_shape[0]
-    kwargs["OUTPUT_SIZE"] = ftl_shape[1]
-
-    train_graph, val_graph, test_graph = data.data.uns['gtrain'], data.data.uns['gval'], data.data.uns['gtest']
-
-    model = scParaLaGWrapper(Namespace(**kwargs))
-    model.fit(train_graph, val_graph, test_graph, torch.tensor(train_label),
-              torch.tensor(val_label), torch.tensor(test_label),
-              num_epochs=kwargs["num_epochs"], batch_size=kwargs["batch_size"],
-              verbose=kwargs["verbose"], es_patience=kwargs["es_patience"],
-              es_min_delta=kwargs["es_min_delta"],
-              es_rate_threshold=kwargs["es_rate_threshold"],
-              learning_rate=kwargs["learning_rate"],
-              sample=kwargs["sample"])
+    if cfg["subtask"] == "openproblems_bmmc_cite_phase2_mod2":
+        cfg["preprocessing_type"] = "None"
+    
+    data, y_train, y_val, y_test, cfg["FEATURE_SIZE"], cfg["OUTPUT_SIZE"], _ = load_or_process_data(cfg, data)
+    
+    for seed in range(1, cfg.get("num_seeds_loop", 6)):
+        cfg["seed"] = seed
+        try:
+            from dance.models.multimodal.scparalag_gcn import scParaLaGWrapper
+            model = scParaLaGWrapper(Namespace(**cfg))
+        except ImportError:
+            print("Missing scParaLaGWrapper.")
+            continue
+        model.fit(data.data.uns['gtrain'], data.data.uns['gval'], data.data.uns['gtest'],
+                  torch.tensor(y_train), torch.tensor(y_val), torch.tensor(y_test),
+                  num_epochs=cfg["num_epochs"], batch_size=cfg["batch_size"],
+                  verbose=cfg["verbose"], es_patience=cfg["es_patience"],
+                  es_min_delta=cfg["es_min_delta"], es_rate_threshold=cfg["es_rate_threshold"],
+                  learning_rate=cfg["learning_rate"], sample=cfg["sample"])
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default='config.yaml', help="Path to config file")
-    args = parser.parse_args()
-
-    config = load_config(args.config)
-    validated_config = validate_config(config)
-
+    parser.add_argument('--config', type=str, default='config.yaml')
+    args, _ = parser.parse_known_args()
+    
+    config = vars(parser.parse_args())
+    if os.path.exists(args.config):
+        config.update(load_config(args.config))
+    
+    config = validate_config(config)
     torch.set_num_threads(1)
-    pipeline(**validated_config)
+    pipeline(config)
